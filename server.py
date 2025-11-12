@@ -1,6 +1,6 @@
 import socket
 import threading
-import zlib
+import crc
 
 #Set Socket
 server = socket.socket()
@@ -14,15 +14,9 @@ print(f"Server has started on address: {ip} and port: {port}")
 clients = []
 client_names=[]
 
-# function to create and send a crc-checked packet
-def create_packet(message):
-	message_bytes = message.encode()
-	checksum = zlib.crc32(message_bytes)
-	return f"{message}|{checksum}".encode()
-
 # function to broadcast messages to all clients (send message to all clients except the sender)
 def broadcast(message, sender_socket):
-    packet = create_packet(message) # create CRC packet
+    packet = crc.create_packet(message) # create CRC packet
     for client in clients:
         if client != sender_socket:
             try:
@@ -43,7 +37,6 @@ def remove_client(client_socket):
 
 def handle_client(c_socket, c_address):
     try:
-        # first message is to get the client name
         c_name = c_socket.recv(1024).decode()
         client_names.append(c_name)
         clients.append(c_socket)
@@ -51,48 +44,31 @@ def handle_client(c_socket, c_address):
         print(f"{c_name} at '{c_address}' has joined the server")
         
         msg = f"Hi {c_name}! Welcome to the server. Type [bye] to exit."
-        c_socket.send(create_packet(msg)) # to be sent with crc implemented
+        c_socket.send(crc.create_packet(msg))
         
-        # broadcast that a new user joined
         broadcast(f"--- {c_name} has joined the chat ---", c_socket)
 
-        # communication Loop 
         while True:
-            # receive message
-            recv_packet = c_socket.recv(1024).decode() # packet received
+            recv_packet = c_socket.recv(1024).decode()
             
-            # CRC check
-            try:
-                recv_msg, received_crc = recv_packet.split('|')
-                message_bytes = recv_msg.encode()
-                local_crc = zlib.crc32(message_bytes)
-
-                if str(local_crc) != received_crc:
-                    print(f"CRC Mismatch from {c_name}. Packet dropped.")
-                    # send an error back
-					#c_socket.send(create_packet("Server > Error: Corrupted message received."))
-                    continue # skip message
+            is_valid, recv_msg = crc.verify_packet(recv_packet)
             
-            except (ValueError, IndexError):
-                print(f"Received malformed packet from {c_name}. Packet dropped.")
-                continue # skip message
+            if not is_valid:
+                print(f"CRC Error from {c_name}. Packet dropped.")
+                continue
             
-
             print(f"{c_name} > {recv_msg}")
             
             if recv_msg == "[bye]":
-                break # jump to finally block
+                break
             
-            # boadcast the valid message
             broadcast(f"{c_name} > {recv_msg}", c_socket)
             
     except Exception as e:
         print(f"Error with client {c_address}: {e}")
     
-    finally:
-        # when loop breaks (or error), remove client
+    finally:  # when loop breaks
         remove_client(c_socket)
-		
 		
 def start_server():
     server.listen()
